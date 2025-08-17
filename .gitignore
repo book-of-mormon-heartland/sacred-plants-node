@@ -1,0 +1,29 @@
+# Exclude Node.js and TypeScript build artifacts
+/dist
+/node_modules
+
+# Exclude configuration and sensitive files
+.env
+/src/certs
+/src/.env
+
+# Exclude macOS system files
+.DS_Store
+.Trashes
+.Spotlight-V100
+ehthumbs.db
+Thumbs.db
+
+# Other common exclusions
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+pnpm-lock.yaml
+package-lock.json
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.bak
