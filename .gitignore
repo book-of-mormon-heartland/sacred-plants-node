@@ -1,6 +1,7 @@
 # Exclude Node.js and TypeScript build artifacts
 /dist
 /node_modules
+uploads/
 
 # Exclude configuration and sensitive files
 .env
