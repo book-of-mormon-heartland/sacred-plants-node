@@ -118,109 +118,81 @@ rest.post('/POST/signout', (req, res) => {
 });
 
 rest.post('/POST/getPlantEntries', (req, res) => {
-    console.log("in getPlantEntries");
-    console.log('All Headers:', req.headers);
+    //console.log("in getPlantEntries");
+    //console.log('All Headers:', req.headers);
 
         // Access a specific header (case-insensitive)
-        const jwtToken = req.headers['Jwt-Token'];
-        console.log("jwtToken: " + jwtToken);
+    const jwtToken = req.headers['Jwt-Token'];
+        //console.log("jwtToken: " + jwtToken);
 
     JSON.stringify({
         "message": "Success",
     });
 });
 
-const analyzePlantImage = async(imagePath: string) => {
-    const apiKey = GEMINI_AI_KEY;
-    if (!apiKey) {
-        throw new Error('GOOGLE_API_KEY not found. Please set it in your .env file.');
-    }
-    const ai = new GoogleGenAI({ apiKey });
-    const base64ImageFile = fs.readFileSync(imagePath, {
-        encoding: "base64",
-    });
-
-    const textPrompt = `
-        Analyze the plant in this image. I need a comprehensive report.
-        Please provide the following information:
-        - Common English Name
-        - Technical Latin Name
-        - A detailed Description of the plant
-        - Human Food Value (if any, be specific)
-        - Medicinal Value (if any, describe)
-        - Other Practical Uses (if any)
-
-        Format the response in a structured, easy-to-read manner.`;
-
-    const myContents = [
-        {
-            inlineData: {
-            mimeType: "image/jpeg",
-            data: base64ImageFile,
-            },
-        },
-        { text: textPrompt },
-    ];
-
-    const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: myContents,
-    });
-    console.log(response.text);
-    return response.text;
-
-    /*
 
 
-
-    const contents = [textPrompt, imagePart];
-
-   
-        */
-}
-
-rest.post('/POST/analyzePhotoWithGemini', upload.single('myFile'), (req: Request, res: Response) => {
-    console.log("this is in analyze with Gemini");
+rest.post('/POST/analyzePhotoWithGemini', upload.single('myFile'), async (req: Request, res: Response) => {
+    
     if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded.' });
     }
-    analyzePlantImage(req.file.path);
-
     try {
-        const tags = ExifReader.load(req.file.path).then((data) => {
+        //const geminiResponse = await analyzePlantImage(req.file.path);
+        const apiKey = GEMINI_AI_KEY;
+        if (!apiKey) {
+            throw new Error('GOOGLE_API_KEY not found. Please set it in your .env file.');
+        }
+        const ai = new GoogleGenAI({ apiKey });
+        const base64ImageFile = fs.readFileSync(req.file.path, {
+            encoding: "base64",
+        });
 
-            console.log("This is where we begin the work with GeminiAI");
-            return res.status(200).json({
-                message: 'Gemini Info is next!',
-                fileName: data.filename,
-                filePath: data.path,
-                latitude: data.GPSLatitude?.description,
-                longitude: data.GPSLongitude?.description
-            });
-            
-        })
-        .catch((error) => {
-            console.error("Error:", error); // This will be executed if the Promise rejects
-            JSON.stringify({
-                "message": error,
-            });
+        const textPrompt = `
+            Analyze the plant in this image. I need a comprehensive report.
+            Please provide the following information:
+            - Common English Name
+            - Technical Latin Name
+            - A detailed Description of the plant
+            - Human Food Value (if any, be specific)
+            - Medicinal Value (if any, describe)
+            - Other Practical Uses (if any)
+
+            Format the response in a structured, easy-to-read manner.`;
+
+        const myContents = [
+            {
+                inlineData: {
+                mimeType: "image/jpeg",
+                data: base64ImageFile,
+                },
+            },
+            { text: textPrompt },
+        ];
+        const result = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: myContents,
         });
-    } catch (error) {
-        console.error("Error reading EXIF data:", error);
-        JSON.stringify({
-            "message": error,
+        // Extract the response text
+        const responseText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+        if (!responseText) {
+            return res.status(500).json({ error: 'Failed to get a valid response from the Gemini API.' });
+        }
+        // Send the response back to your React Native app
+        return res.status(200).json({ 
+            message: "success",
+            response: responseText 
         });
-    }
+
+   } catch (error) {
+        console.error("Error analyzing image with Gemini:", error);
+        return res.status(500).json({ message: "Error analyzing image", error: error?.toString() });
+   }
+    
 });
 
-/*
-rest.post('/POST/findImageGeoCoordinates', upload.single('image'), (req, res) => {
-  console.log('findImageGeoCoordinates');
-  //console.log(req.file);
-  // Do your analysis here
-  res.json({ message: 'Image received', file: req.file });
-});
-*/
+
 rest.post('/POST/refreshtoken', (req, res) => {
     /*
     const jwtToken = req.headers['authorization'];
