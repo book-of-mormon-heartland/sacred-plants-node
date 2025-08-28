@@ -1,10 +1,10 @@
 // src/routes/userRoutes.ts
-import { type Request, type Response } from "express";
+import e, { type Request, type Response } from "express";
 import { Router } from 'express';
 import dotenv from "dotenv";
 import jwt from "jsonwebtoken";
 import { OAuth2Client } from 'google-auth-library';
-import {addUser} from ".././database/database.js";
+import { getPlant, addPlant, addOrUpdateUser, getUserLanguage, saveLanguageToUserProfile} from ".././database/database.js";
 import  multer  from 'multer';
 import path from 'path';
 import ExifReader from 'exifreader';
@@ -46,12 +46,13 @@ rest.get("/", function (req, res) {
     res.send("Rest home page");
 });
 
-
+/*
 rest.get("/GET/oauth2callback", (req, res) => {
     console.log("Rest oauth2callback. next is req");
     //console.log(req);
     res.send("Rest oauth2callback.");
 });
+*/
 
 rest.post('/POST/googlelogin', (req, res) => {
 
@@ -85,7 +86,9 @@ rest.post('/POST/googlelogin', (req, res) => {
                 }));
             }
             // Add or update the user.  Same thing here.
-            addUser(user);
+            addOrUpdateUser(user);
+            let language = await getUserLanguage(user.id);
+
             // generate the jwt token.
             let jwtToken = jwt.sign({ userId: user.id }, jwtSecret, { expiresIn: '1h' });
             let refreshToken = jwt.sign({ userId: user.id }, jwtSecret, { expiresIn: '7d' });
@@ -94,6 +97,7 @@ rest.post('/POST/googlelogin', (req, res) => {
             return res.json(
             JSON.stringify({
                 "message": "Success",
+                "language": language,
                 "jwtToken": jwtToken,
                 "refreshToken": refreshToken,
             }))
@@ -118,12 +122,23 @@ rest.post('/POST/signout', (req, res) => {
 });
 
 rest.post('/POST/getPlantEntries', (req, res) => {
+    //begin security check
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).send('Unauthorized: No token provided or malformed.');
+    }
+    const jwtToken: any = authHeader.split(' ')[1];
+    if (!checkToken(jwtToken)) {
+        return res.status(401).send('Unauthorized: Token is invalid or expired.');
+    }
+    // end security check
+
     //console.log("in getPlantEntries");
     //console.log('All Headers:', req.headers);
 
-        // Access a specific header (case-insensitive)
-    const jwtToken = req.headers['Jwt-Token'];
-        //console.log("jwtToken: " + jwtToken);
+    // Access a specific header (case-insensitive)
+    //const jwtToken = req.headers['Jwt-Token'];
+    //console.log("jwtToken: " + jwtToken);
 
     JSON.stringify({
         "message": "Success",
@@ -132,8 +147,43 @@ rest.post('/POST/getPlantEntries', (req, res) => {
 
 
 
-rest.post('/POST/analyzePhotoWithGemini', upload.single('myFile'), async (req: Request, res: Response) => {
+rest.post('/POST/setLanguage', (req, res) => {
+    //console.log("in setLanguage");
+    //begin security check
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).send('Unauthorized: No token provided or malformed.');
+    }
+    const jwtToken: any = authHeader.split(' ')[1];
+    if (!checkToken(jwtToken)) {
+        return res.status(401).send('Unauthorized: Token is invalid or expired.');
+    }
+    // end security check
+
+    const payload = jwt.verify(jwtToken, jwtSecret);    const decodedPayload: any = jwt.verify(jwtToken, jwtSecret);
+    const selectedLanguage = req.body.language;
+    const userId = decodedPayload.userId;
+    saveLanguageToUserProfile(userId, selectedLanguage);
+
+    return res.status(200).json({ 
+        message: "Not Yet",
+    });
     
+});
+
+rest.post('/POST/analyzePhotoWithGemini', upload.single('myFile'), async (req: Request, res: Response) => {
+
+    //begin security check
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).send('Unauthorized: No token provided or malformed.');
+    }
+    const jwtToken: any = authHeader.split(' ')[1];
+    if (!checkToken(jwtToken)) {
+        return res.status(401).send('Unauthorized: Token is invalid or expired.');
+    }
+    // end security check
+
     if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded.' });
     }
@@ -148,17 +198,11 @@ rest.post('/POST/analyzePhotoWithGemini', upload.single('myFile'), async (req: R
             encoding: "base64",
         });
 
-        const textPrompt = `
-            Analyze the plant in this image. I need a comprehensive report.
-            Please provide the following information:
-            - Common English Name
-            - Technical Latin Name
-            - A detailed Description of the plant
-            - Human Food Value (if any, be specific)
-            - Medicinal Value (if any, describe)
-            - Other Practical Uses (if any)
+        const textPrompt1 = `
+            Analyze the plant.
+            Please only provide the Technical Latin name.  Have it formatted so that 'Technical Latin Name ' is before the name. :
+            - Technical Latin Name`;
 
-            Format the response in a structured, easy-to-read manner.`;
 
         const myContents = [
             {
@@ -167,23 +211,88 @@ rest.post('/POST/analyzePhotoWithGemini', upload.single('myFile'), async (req: R
                 data: base64ImageFile,
                 },
             },
-            { text: textPrompt },
+            { text: textPrompt1 },
         ];
         const result = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: myContents,
         });
         // Extract the response text
-        const responseText = result.candidates?.[0]?.content?.parts?.[0]?.text;
-
+        let responseText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+        const regex = /Technical Latin Name: (.*)$/m;
+        let databaseKey : any;
+        let latinName : any;
+        if(responseText != undefined){
+            let match: string[] | null = regex.exec(responseText);
+            console.log("This is match");
+            console.log(match);
+            if (match != undefined ) {
+                // The captured group is at index 1 of the match array
+                latinName = match[1]?.trim();
+                databaseKey = latinName?.replace(/^\*+|\*+$/g, '').toLowerCase().replace(/ /g, "-");
+                console.log("databaseKey");
+                console.log(databaseKey); // Output: Hello World***
+            }
+        }
         if (!responseText) {
             return res.status(500).json({ error: 'Failed to get a valid response from the Gemini API.' });
         }
+        // now we have the technical name used for the key.  We will hit the database and return what is in
+        // that database is anything is there.
+
+        let databaseResult : any;
+        if(databaseKey!=undefined) {
+            databaseResult = await getPlant(databaseKey)
+            console.log(databaseResult);
+            console.log("databaseResult");
+
+            if(databaseResult.length>0) {
+                responseText = databaseResult[0].text;
+                return res.status(200).json({
+                    message: "success",
+                    response: responseText
+                });
+            } else {
+               // its not in the database.  We need to call AI and give them the technical name only with 
+               // the same prompt but no image.
+
+                const textPrompt2 = `
+                    Analyze the plant with the technical name ${latinName}. I need a comprehensive report.
+                    Please provide the following information:
+                    - Common English Name
+                    - Technical Latin Name
+                    - A detailed Description of the plant
+                    - Human Food Value (if any, be specific)
+                    - Medicinal Value (if any, describe)
+                    - Other Practical Uses (if any)
+
+                    Format the response in a structured, easy-to-read manner.`;
+
+                const myContents2 = [ { text: textPrompt2 }, ];
+                const myResults2 = await ai.models.generateContent({
+                    model: "gemini-2.5-flash",
+                    contents: myContents2,
+                });
+
+                let responseText2 = myResults2.candidates?.[0]?.content?.parts?.[0]?.text;
+                console.log(responseText2);
+                let plant = {
+                    id: databaseKey,
+                    text: responseText2,
+                }
+                addPlant(databaseKey, plant);
+                return res.status(200).json({ 
+                    message: "success",
+                    response: responseText2 
+                });
+            }
+        }
+
         // Send the response back to your React Native app
-        return res.status(200).json({ 
-            message: "success",
-            response: responseText 
-        });
+        //return res.status(200).json({ 
+        //    message: "success",
+        //    response: responseText 
+        //});
 
    } catch (error) {
         console.error("Error analyzing image with Gemini:", error);
@@ -236,25 +345,20 @@ rest.post('/POST/refreshtoken', (req, res) => {
 });
 
 const checkToken = (jwtTokenValue: string) => {
-    return true;
+    const decodedPayload: any = jwt.verify(jwtTokenValue, jwtSecret);
+    let expiration_timestamp = decodedPayload.exp;
+    const currentTimeInSeconds = Math.floor(Date.now() / 1000);
+    const isExpired = decodedPayload.exp < currentTimeInSeconds;
+    
+    //console.log("EXP: " + expiration_timestamp);
     /*
-    const payload = jwt.verify(jwtTokenValue, jwtSecret);    
-    console.log(payload);
-    console.log(payload?.userId);
-    var expiration_timestamp: number = 0;
-    if(payload?.exp != undefined) {
-        expiration_timestamp = payload.exp;
-    }
-    let current_timestamp_utc: number = Date.now();
-    console.log("Expiration Timestamp: ", expiration_timestamp);
-    console.log("Current Timestamp: ", current_timestamp_utc);
-
-    if (expiration_timestamp <= current_timestamp_utc){
-        return true;
+    if (isExpired) {
+        console.log("Token has expired. 💀");
     } else {
-        return false;
+        console.log("Token is still valid. ✅");
     }
     */
+    return !isExpired;
 }
 
 
